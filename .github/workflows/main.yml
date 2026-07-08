@@ -1,0 +1,31 @@
+name: Epic Free Game Notifier
+
+on:
+  # 定时触发：每天北京时间 10:00（UTC 02:00）
+  schedule:
+    - cron: '0 2 * * *'
+  # 手动触发
+  workflow_dispatch:
+
+jobs:
+  run_script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Notifier
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
+          # 可选：自定义通知窗口（小时），默认 28
+          NOTIFY_HOURS: ${{ vars.NOTIFY_HOURS || '28' }}
+        run: python main.py
