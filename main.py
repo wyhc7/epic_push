@@ -157,14 +157,13 @@ def get_epic_free_games() -> list[dict]:
             if is_free:
                 break
 
-        # ── 2. 只收集「免费 + 新上架」的游戏
+                # ── 2. 只收集「免费 + 新上架」的游戏
         if is_free and is_new_game:
             title       = game.get("title", "未知游戏")
             description = game.get("description", "暂无简介")
-                        slug = game.get("productSlug") or game.get("urlSlug") or ""
+            slug        = game.get("productSlug") or game.get("urlSlug") or ""
             if slug:
                 product_id = game.get("id", "")
-                # Epic URL 格式: /p/{slug}-{id前6位}，不加 hash 会 404
                 id_suffix = f"-{product_id[:6]}" if product_id else ""
                 link = f"https://store.epicgames.com/p/{slug}{id_suffix}"
             else:
