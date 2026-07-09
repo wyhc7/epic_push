@@ -157,17 +157,25 @@ def get_epic_free_games() -> list[dict]:
             if is_free:
                 break
 
-                # ── 2. 只收集「免费 + 新上架」的游戏
+        # ── 2. 只收集「免费 + 新上架」的游戏
         if is_free and is_new_game:
             title       = game.get("title", "未知游戏")
             description = game.get("description", "暂无简介")
-            slug        = game.get("productSlug") or game.get("urlSlug") or ""
-            if slug:
-                product_id = game.get("id", "")
-                id_suffix = f"-{product_id[:6]}" if product_id else ""
-                link = f"https://store.epicgames.com/p/{slug}{id_suffix}"
-            else:
-                link = "https://store.epicgames.com/free-games"
+
+            # 正确方式：从 offerMappings 或 catalogNs.mappings 取 pageSlug
+            page_slug = ""
+            offer_mappings = game.get("offerMappings") or []
+            if offer_mappings:
+                page_slug = offer_mappings[0].get("pageSlug", "")
+            if not page_slug:
+                ns_mappings = (
+                    (game.get("catalogNs") or {}).get("mappings") or []
+                )
+                if ns_mappings:
+                    page_slug = ns_mappings[0].get("pageSlug", "")
+
+            link = f"https://store.epicgames.com/p/{page_slug}" if page_slug \
+                   else "https://store.epicgames.com/free-games"
           
           # ── 封面图：优先 Thumbnail，其次 OfferImageWide
             image_url = ""
