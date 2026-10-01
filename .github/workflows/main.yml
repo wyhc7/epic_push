@@ -1,15 +1,23 @@
 name: Epic Free Game Notifier
 
 on:
-  # 定时触发：每天北京时间 10:00（UTC 02:00）
+  # 每天北京时间 10:00（UTC 02:00）
   schedule:
     - cron: '0 2 * * *'
   # 手动触发
   workflow_dispatch:
 
+# 避免定时任务互相堆积
+concurrency:
+  group: epic-notifier
+  cancel-in-progress: false
+
 jobs:
   run_script:
     runs-on: ubuntu-latest
+    permissions:
+      # 需要写权限把 state.json 提交回去（同时充当保活心跳）
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,10 +30,92 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: List available channels
+        run: python main.py --list-channels
+
       - name: Run Notifier
         env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
-          # 可选：自定义通知窗口（小时），默认 28
-          NOTIFY_HOURS: ${{ vars.NOTIFY_HOURS || '28' }}
+          # ── 渠道开关：auto（默认，自动启用已配置的渠道）/ all / telegram,wecom,feishu,…
+          PUSH_CHANNELS:        ${{ vars.PUSH_CHANNELS || 'auto' }}
+          # ── 行为参数
+          NOTIFY_HOURS:         ${{ vars.NOTIFY_HOURS || '28' }}
+          HEARTBEAT_DAYS:       ${{ vars.HEARTBEAT_DAYS || '15' }}
+
+          # ── 1. Telegram
+          TG_BOT_TOKEN:         ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID:           ${{ secrets.TG_CHAT_ID }}
+
+          # ── 2. 企业微信群机器人
+          WECOM_WEBHOOK:        ${{ secrets.WECOM_WEBHOOK }}
+
+          # ── 3. 钉钉机器人
+          DINGTALK_WEBHOOK:     ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET:      ${{ secrets.DINGTALK_SECRET }}
+
+          # ── 4. 飞书机器人
+          FEISHU_WEBHOOK:       ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET:        ${{ secrets.FEISHU_SECRET }}
+
+          # ── 5. Server 酱
+          SERVERCHAN_SENDKEY:   ${{ secrets.SERVERCHAN_SENDKEY }}
+
+          # ── 6. PushPlus
+          PUSHPLUS_TOKEN:       ${{ secrets.PUSHPLUS_TOKEN }}
+
+          # ── 7. Bark（iOS）
+          BARK_KEY:             ${{ secrets.BARK_KEY }}
+          BARK_SERVER:          ${{ secrets.BARK_SERVER }}
+
+          # ── 8. ntfy
+          NTFY_TOPIC:           ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER:          ${{ secrets.NTFY_SERVER }}
+          NTFY_TOKEN:           ${{ secrets.NTFY_TOKEN }}
+
+          # ── 9. Gotify（自建）
+          GOTIFY_URL:           ${{ secrets.GOTIFY_URL }}
+          GOTIFY_TOKEN:         ${{ secrets.GOTIFY_TOKEN }}
+
+          # ── 10/11. Discord / Slack
+          DISCORD_WEBHOOK:      ${{ secrets.DISCORD_WEBHOOK }}
+          SLACK_WEBHOOK:        ${{ secrets.SLACK_WEBHOOK }}
+
+          # ── 12/13. PushDeer / WxPusher
+          PUSHDEER_KEY:         ${{ secrets.PUSHDEER_KEY }}
+          PUSHDEER_URL:         ${{ secrets.PUSHDEER_URL }}
+          WXPUSHER_APP_TOKEN:   ${{ secrets.WXPUSHER_APP_TOKEN }}
+          WXPUSHER_UIDS:        ${{ secrets.WXPUSHER_UIDS }}
+
+          # ── 14. 邮件
+          SMTP_HOST:            ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:            ${{ secrets.SMTP_PORT }}
+          SMTP_USER:            ${{ secrets.SMTP_USER }}
+          SMTP_PASS:            ${{ secrets.SMTP_PASS }}
+          MAIL_TO:              ${{ secrets.MAIL_TO }}
+          MAIL_FROM:            ${{ secrets.MAIL_FROM }}
+
+          # ── 15. 通用 Webhook
+          GENERIC_WEBHOOK:         ${{ secrets.GENERIC_WEBHOOK }}
+          GENERIC_WEBHOOK_METHOD:  ${{ secrets.GENERIC_WEBHOOK_METHOD }}
+          GENERIC_WEBHOOK_HEADERS: ${{ secrets.GENERIC_WEBHOOK_HEADERS }}
         run: python main.py
+
+      # ── 保活核心：把 state.json 的变化提交回去 ──
+      # 只要仓库有 commit 被 push，GitHub 的「60 天无活动就禁用定时任务」计时器
+      # 就会被重置。脚本每 HEARTBEAT_DAYS 天至少刷新一次心跳，因此永不会被禁用。
+      - name: Persist state (keepalive heartbeat)
+        if: always()
+        run: |
+          set -e
+          if [ -z "$(git status --porcelain state.json)" ]; then
+            echo "state.json 无变化，本次不提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "chore(state): $(date -u +'%Y-%m-%d %H:%M UTC') [skip ci]"
+          # 多跑一次 rebase 重试，覆盖极端情况下的并发写
+          for i in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then break; fi
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          done

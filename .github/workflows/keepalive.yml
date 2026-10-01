@@ -1,20 +1,61 @@
-name: Keepalive Workflow
+name: Keepalive
+
+# ─────────────────────────────────────────────────────────────
+# 兜底保活。
+#
+# GitHub 的规则：公开仓库连续 60 天没有 commit 被 push，就会**静默禁用**
+# 该仓库所有 schedule 触发的工作流（不发邮件、不发通知，到点就是不跑）。
+#
+# 首选的保活手段其实在主工作流里 —— main.yml 每次运行都会按需提交
+# state.json，天然产生 commit。本文件只是第二层保险：万一主工作流长期
+# 报错（比如 Epic 改了 API 而你没同步），这里还能把仓库续命。
+#
+# 两个关键设计，正是旧版失效的原因：
+#   1. **高频执行**（每周一次）。旧版每月 1 号才跑，等它发现"该保活了"，
+#      工作流往往已经被禁用、根本不会触发，形成死锁。
+#   2. **自己算日期**，不再依赖第三方 action 的 time_elapsed 默认值，
+#      行为完全可预测、零供应链风险。
+# ─────────────────────────────────────────────────────────────
 
 on:
   schedule:
-    - cron: '0 0 1 * *'  # 每月 1 号执行一次
+    - cron: '0 3 * * 1'   # 每周一 03:00 UTC
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: epic-keepalive
+  cancel-in-progress: false
 
 jobs:
   keepalive:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # 需要写权限创建空 commit
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Keepalive Action
-        uses: gautamkrishnar/keepalive-workflow@v1
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          # 自动创建空 commit，防止 GitHub 60 天后暂停定时任务
-          commit_message: "Automated keepalive commit"
+          fetch-depth: 0   # 需要完整历史才能算出上次 commit 的时间
+
+      - name: 计算距上次提交的天数
+        id: check
+        run: |
+          LAST=$(git log -1 --format=%ct)
+          NOW=$(date -u +%s)
+          DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "days=$DAYS" >> "$GITHUB_OUTPUT"
+          echo "距上次 commit：${DAYS} 天（阈值 30 天）"
+
+      - name: 必要时补一个心跳提交
+        if: ${{ steps.check.outputs.days >= 30 }}
+        run: |
+          set -e
+          STAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+          printf '最后保活：%s\n' "$STAMP" > .keepalive
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "chore(keepalive): ${STAMP} [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "✅ 已提交心跳，60 天计时器重置"
